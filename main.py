@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode, ChatMemberStatus
-from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -24,19 +23,19 @@ ELONCHI_BOT_USERNAME = "YukchiForwarder_Bot"
 
 logging.basicConfig(level=logging.INFO)
 
-bot1 = Bot(token=API_TOKEN_1, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+# Eski versiyalar bilan ham 100% ishlaydigan oddiy va xatosiz e'lon
+bot1 = Bot(token=API_TOKEN_1)
 dp1 = Dispatcher(storage=MemoryStorage())
 
-bot2 = Bot(token=API_TOKEN_2, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot2 = Bot(token=API_TOKEN_2)
 dp2 = Dispatcher(storage=MemoryStorage())
 
 app = FastAPI()
 
-# Bazalar
-banned_users = {}         # {user_id: target_str}
-drivers_db = {}            # {user_id: {"name": name, "car": car, "phone": phone}}
-curators_db = {}           # {user_id: {"name": name, "phone": phone}}
-active_loads = {}          # {load_id: {...}}
+banned_users = {}
+drivers_db = {}
+curators_db = {}
+active_loads = {}
 load_counter = 0
 
 class UserRoleState(StatesGroup):
@@ -94,28 +93,22 @@ def get_sub_keyboard():
         [InlineKeyboardButton(text="🔄 Tekshirish", callback_data="check_sub")]
     ])
 
-# ================= 1-BOT (@YukchiForwarder_Bot - E'lonchi) =================
 @dp1.message(F.text == "/start")
 async def start_cmd_bot1(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
-
     if user_id in banned_users:
         await message.answer("⛔️ <b>Siz botdan va guruhlardan bloklangansiz!</b>")
         return
-
-    # Adminlar uchun obuna talab qilinmaydi
     if user_id in ADMINS:
         await message.answer("👨‍💻 <b>Admin Boshqaruv Paneli:</b>", reply_markup=get_admin_keyboard())
         return
-
     if not await check_subscriptions(user_id):
         await message.answer("⚠️ <b>Botdan to'liq foydalanish uchun quyidagi kanallarimizga obuna bo'ling:</b>", reply_markup=get_sub_keyboard())
         return
-
     if user_id in drivers_db:
         d = drivers_db[user_id]
-        await message.answer(f"🚛 <b>Xush kelibsiz, haydovchi {d['name']}!</b>\nMashinangiz: {d['car']}\n\nYuklarni kuzatishingiz mumkin.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        await message.answer(f"🚛 <b>Xush kelibsiz, haydovchi {d['name']}!</b>\nMashinangiz: {d['car']}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🌐 Support Sayt", url=SUPPORT_SITE_URL)]
         ]))
         return
@@ -149,7 +142,6 @@ async def check_sub_callback(call: types.CallbackQuery, state: FSMContext):
     else:
         await call.answer("❌ Hali hamma kanallarga qo'shilmadingiz!", show_alert=True)
 
-# Haydovchi ro'yxatdan o'tish
 @dp1.callback_query(F.data == "role_driver", UserRoleState.choosing_role)
 async def role_driver_chosen(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("👤 Ism-sharifingizni to'liq yuboring:")
@@ -166,7 +158,6 @@ async def driver_get_car_handler(message: types.Message, state: FSMContext):
     car = message.text.strip()
     data = await state.get_data()
     user_id = message.from_user.id
-    
     drivers_db[user_id] = {
         "name": data.get("driver_name"),
         "car": car,
@@ -176,7 +167,6 @@ async def driver_get_car_handler(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Muvaffaqiyatli ro'yxatdan o'tdingiz!\nIsm: {data.get('driver_name')}\nMashina: {car}")
     await state.clear()
 
-# Kurator ro'yxatdan o'tish
 @dp1.callback_query(F.data == "role_curator", UserRoleState.choosing_role)
 async def role_curator_chosen(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text("👤 Ism-sharifingizni yuboring:")
@@ -186,13 +176,7 @@ async def role_curator_chosen(call: types.CallbackQuery, state: FSMContext):
 async def curator_get_name_handler(message: types.Message, state: FSMContext):
     name = message.text.strip()
     user_id = message.from_user.id
-    
-    curators_db[user_id] = {
-        "name": name,
-        "username": message.from_user.username,
-        "phone": "Telegram"
-    }
-    
+    curators_db[user_id] = {"name": name, "username": message.from_user.username, "phone": "Telegram"}
     choice_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✍️ Qo'lda kiritish", callback_data="load_manual")],
         [InlineKeyboardButton(text="⚡️ Tayyor e'lon tashlash", callback_data="load_ready")]
@@ -319,12 +303,12 @@ async def accept_load_handler(call: types.CallbackQuery):
         await call.answer("❌ Bu yuk topilmadi!", show_alert=True)
         return
     try:
-        await bot1.send_message(chat_id=load["user_id"], text=f"✅ <b>Haydovchi topildi!</b>\nIsm: {driver['name']}\nMashina: {driver['car']}\nTel: {driver['phone']}")
+        await bot1.send_message(chat_id=load["user_id"], text=f"✅ <b>Haydovchi topildi!</b>\nIsm: {driver['name']}\nMashina: {driver['car']}")
     except Exception:
         pass
     await call.answer("✅ Kuratorga ma'lumotingiz yuborildi!", show_alert=True)
 
-# ================= 2-BOT (@YukchiForwarderorg_Bot - Nazoratchi va Shikoyat) =================
+# ================= 2-BOT =================
 def get_complaint_keyboard(is_admin: bool = False):
     buttons = [
         [InlineKeyboardButton(text="⚠️ Shikoyat qilish", callback_data="comp_shikoyat")],
@@ -343,15 +327,10 @@ async def start_cmd_bot2(message: types.Message, state: FSMContext):
     if user_id in banned_users:
         await message.answer("⛔️ Siz bloklangansiz!")
         return
-    
     is_admin = user_id in ADMINS
     if is_admin:
         await message.answer("👨‍💻 <b>Admin Paneli:</b>", reply_markup=get_admin_keyboard())
-
-    await message.answer(
-        "🛡 <b>Nazoratchi va Shikoyat Boti</b>\n\nShikoyat yoki muammo bo'lsa pastdagi tugmani bosing:",
-        reply_markup=get_complaint_keyboard(is_admin)
-    )
+    await message.answer("🛡 <b>Nazoratchi va Shikoyat Boti</b>\n\nShikoyat yoki muammo bo'lsa pastdagi tugmani bosing:", reply_markup=get_complaint_keyboard(is_admin))
 
 @dp2.callback_query(F.data == "admin_panel_open")
 async def bot2_open_admin_panel(call: types.CallbackQuery):
@@ -371,7 +350,6 @@ async def process_complaint_text(message: types.Message, state: FSMContext):
     c_type = data.get("complaint_type", "Murojaat")
     user = message.from_user
     user_info = f"👤 <b>Kimdan:</b> {user.full_name} (@{user.username or 'yoq'}, ID: <code>{user.id}</code>)\n📌 <b>Turi:</b> {c_type}"
-    
     for admin_id in ADMINS:
         try:
             if message.photo:
@@ -396,7 +374,6 @@ async def security_group_guard(message: types.Message):
         except Exception:
             pass
 
-# Umumiy Admin Handlerlar (Broadcasting & Ban)
 async def handle_broadcast_start(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMINS: return
     await call.message.answer("📢 Reklama matnini yuboring:")
@@ -440,7 +417,6 @@ async def handle_unban_process(message: types.Message, state: FSMContext):
     await message.answer(f"✅ {target} bandan chiqarildi!")
     await state.clear()
 
-# Bot 1 & 2 Admin hook mappings
 for dp_inst, b_inst in [(dp1, bot1), (dp2, bot2)]:
     @dp_inst.callback_query(F.data == "admin_broadcast")
     async def bc_s(c: types.CallbackQuery, s: FSMContext): await handle_broadcast_start(c, s)
