@@ -38,6 +38,7 @@ DRIVERS_FILE = "/tmp/drivers.json"
 CURATORS_FILE = "/tmp/curators.json"
 BANNED_FILE = "/tmp/banned.json"
 LOADS_FILE = "/tmp/loads.json"
+STATS_FILE = "/tmp/stats.json"
 
 def load_json(path):
     if os.path.exists(path):
@@ -59,6 +60,7 @@ drivers_db = {int(k) if k.isdigit() else k: v for k, v in load_json(DRIVERS_FILE
 curators_db = {int(k) if k.isdigit() else k: v for k, v in load_json(CURATORS_FILE).items()}
 banned_users = {int(k) if k.isdigit() else k: v for k, v in load_json(BANNED_FILE).items()}
 active_loads = {int(k) if k.isdigit() else k: v for k, v in load_json(LOADS_FILE).items()}
+user_stats = {int(k) if k.isdigit() else k: v for k, v in load_json(STATS_FILE).items()}
 
 load_counter = max(active_loads.keys()) if active_loads else 0
 
@@ -117,11 +119,51 @@ def get_sub_keyboard():
         [InlineKeyboardButton(text="🔄 Tekshirish", callback_data="check_sub")]
     ])
 
-# ================= 1-BOT HANDLERS =================
+# Foydalanuvchi faolligini qayd etish va adminga xabar berish
+async def track_user_activity(user: types.User, bot_name: str):
+    user_id = user.id
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    if user_id not in user_stats:
+        user_stats[user_id] = {
+            "name": user.full_name,
+            "username": user.username or "yoq",
+            "bots": [],
+            "last_active": now_str
+        }
+    
+    if bot_name not in user_stats[user_id]["bots"]:
+        user_stats[user_id]["bots"].append(bot_name)
+    
+    user_stats[user_id]["last_active"] = now_str
+    save_json(STATS_FILE, user_stats)
+
+    # Adminga xabar berish
+    total_bots_count = len(user_stats[user_id]["bots"])
+    admin_msg = (
+        f"📊 <b>Faol Foydalanuvchi Statistikasi:</b>\n\n"
+        f"👤 Ism: {user.full_name}\n"
+        f"🔗 Username: @{user.username or 'yoq'}\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"🤖 Foydalanayotgan botlari: {', '.join(user_stats[user_id]['bots'])} (Jami: {total_bots_count} ta bot)\n"
+        f"⏰ Vaqt: {now_str}"
+    )
+    for admin_id in ADMINS:
+        try:
+            await bot1.send_message(chat_id=admin_id, text=admin_msg)
+        except Exception:
+            try:
+                await bot2.send_message(chat_id=admin_id, text=admin_msg)
+            except Exception:
+                pass
+
+# ================= 1-BOT HANDLERS (E'lonchi Bot) =================
 @dp1.message(F.text == "/start")
 async def start_cmd_bot1(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
+    await track_user_activity(message.from_user, "@YukchiForwarder_Bot")
+
     if user_id in banned_users:
         await message.answer("⛔️ <b>Siz botdan va guruhlardan bloklangansiz!</b>")
         return
@@ -325,7 +367,7 @@ async def finalize_and_send_load(message: types.Message, state: FSMContext, data
         "expire_time": expire_time.isoformat()
     }
     save_json(LOADS_FILE, active_loads)
-    await message.answer("✅ Yuk guruhlarga yuborildi!")
+    await message.answer("✅ Yuk guruhlarga muvaffaqiyatli yuborildi!")
     await state.clear()
 
 @dp1.callback_query(F.data.startswith("show_curator_phone:"))
@@ -341,16 +383,16 @@ async def accept_load_handler(call: types.CallbackQuery):
         return
     load = active_loads.get(int(call.data.split(":")[1]))
     if not load:
-        await call.answer("❌ Bu yuk topilmadi!", show_alert=True)
+        await call.answer("❌ Bu yuk topilmadi yoki muddati tugagan!", show_alert=True)
         return
     try:
-        await bot1.send_message(chat_id=load["user_id"], text=f"✅ <b>Haydovchi topildi!</b>\nIsm: {driver['name']}\nMashina: {driver['car']}")
+        await bot1.send_message(chat_id=load["user_id"], text=f"✅ <b>Haydovchi yukni qabul qildi!</b>\nIsm: {driver['name']}\nMashina: {driver['car']}")
     except Exception:
         pass
     await call.answer("✅ Kuratorga ma'lumotingiz yuborildi!", show_alert=True)
 
 
-# ================= 2-BOT HANDLERS =================
+# ================= 2-BOT HANDLERS (Nazoratchi Bot) =================
 def get_complaint_keyboard(is_admin: bool = False):
     buttons = [
         [InlineKeyboardButton(text="⚠️ Shikoyat qilish", callback_data="comp_shikoyat")],
@@ -366,6 +408,8 @@ def get_complaint_keyboard(is_admin: bool = False):
 async def start_cmd_bot2(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
+    await track_user_activity(message.from_user, "@YukchiForwarderorg_Bot")
+
     if user_id in banned_users:
         await message.answer("⛔️ Siz bloklangansiz!")
         return
@@ -421,7 +465,7 @@ async def security_group_guard(message: types.Message):
             pass
 
 
-# ================= COMMON ADMIN HANDLERS =================
+# ================= COMMON ADMIN HANDLERS (Har ikkala bot uchun ishlaydi) =================
 async def handle_broadcast_start(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
     if call.from_user.id not in ADMINS: 
@@ -444,7 +488,7 @@ async def handle_ban_start(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
     if call.from_user.id not in ADMINS: 
         return
-    await call.message.answer("🚫 Ban qilinuvchi ID yoki Username ni kiriting:")
+    await call.message.answer("🚫 Ban qilinuvchi ID ni kiriting:")
     await state.set_state(AdminState.waiting_for_ban_target)
 
 async def handle_ban_process(message: types.Message, state: FSMContext):
@@ -481,6 +525,7 @@ async def handle_unban_process(message: types.Message, state: FSMContext):
     await message.answer(f"✅ {target} bandan chiqarildi!")
     await state.clear()
 
+# Admin handlerlarni ikkala dispatcherga ham ulash
 for dp_inst, b_inst in [(dp1, bot1), (dp2, bot2)]:
     @dp_inst.callback_query(F.data == "admin_broadcast")
     async def bc_s(c: types.CallbackQuery, s: FSMContext): 
@@ -506,16 +551,32 @@ async def lst_drv(c: types.CallbackQuery):
     await c.answer()
     if c.from_user.id not in ADMINS: 
         return
-    txt = "\n".join([f"{d['name']} | {d['car']}" for d in drivers_db.values()]) or "Yo'q"
-    await c.message.answer(f"🚛 Haydovchilar:\n{txt}")
+    txt = "\n".join([f"{d['name']} | {d['car']}" for d in drivers_db.values()]) or "Haydovchilar yo'q"
+    await c.message.answer(f"🚛 Haydovchilar ro'yxati:\n{txt}")
 
 @dp1.callback_query(F.data == "admin_list_curators")
 async def lst_cur(c: types.CallbackQuery):
     await c.answer()
     if c.from_user.id not in ADMINS: 
         return
-    txt = "\n".join([f"{cu['name']}" for cu in curators_db.values()]) or "Yo'q"
-    await c.message.answer(f"📦 Kuratorlar:\n{txt}")
+    txt = "\n".join([f"{cu['name']}" for cu in curators_db.values()]) or "Kuratorlar yo'q"
+    await c.message.answer(f"📦 Kuratorlar ro'yxati:\n{txt}")
+
+@dp2.callback_query(F.data == "admin_list_drivers")
+async def lst_drv2(c: types.CallbackQuery):
+    await c.answer()
+    if c.from_user.id not in ADMINS: 
+        return
+    txt = "\n".join([f"{d['name']} | {d['car']}" for d in drivers_db.values()]) or "Haydovchilar yo'q"
+    await c.message.answer(f"🚛 Haydovchilar ro'yxati:\n{txt}")
+
+@dp2.callback_query(F.data == "admin_list_curators")
+async def lst_cur2(c: types.CallbackQuery):
+    await c.answer()
+    if c.from_user.id not in ADMINS: 
+        return
+    txt = "\n".join([f"{cu['name']}" for cu in curators_db.values()]) or "Kuratorlar yo'q"
+    await c.message.answer(f"📦 Kuratorlar ro'yxati:\n{txt}")
 
 
 # ================= FASTAPI & WEBHOOK SETUP =================
@@ -559,15 +620,14 @@ async def webhook_bot1(request: Request):
 @app.post(f"/webhook/bot2/{API_TOKEN_2}")
 async def webhook_bot2(request: Request):
     try:
-        update = Update.model_validate(await request.json(), context={"bot": bot2})
+        update = Update.model_validate(await request.json(), context={"bot2": bot2})
         await dp2.feed_update(bot2, update)
         return {"status": "ok"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "error"}
 
 @app.get("/")
 async def root(request: Request):
-    # Sayt ochilganda webhooklarni avtomatik ulab qo'yadi
     base_url = str(request.base_url).rstrip("/")
     url1 = f"{base_url}/webhook/bot1/{API_TOKEN_1}"
     url2 = f"{base_url}/webhook/bot2/{API_TOKEN_2}"
