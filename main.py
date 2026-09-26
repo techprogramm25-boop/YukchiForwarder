@@ -119,7 +119,6 @@ def get_sub_keyboard():
         [InlineKeyboardButton(text="🔄 Tekshirish", callback_data="check_sub")]
     ])
 
-# Foydalanuvchi faolligini qayd etish va adminga xabar berish
 async def track_user_activity(user: types.User, bot_name: str):
     user_id = user.id
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -146,7 +145,7 @@ async def track_user_activity(user: types.User, bot_name: str):
         f"👤 Ism: {user.full_name}\n"
         f"🔗 Username: @{user.username or 'yoq'}\n"
         f"🆔 ID: <code>{user_id}</code>\n"
-        f"🤖 Qaysi botlardan foydalanmoqda: {used_bots_str} (Jami: {total_bots_count} ta bot)\n"
+        f"🤖 Botlar: {used_bots_str} (Jami: {total_bots_count} ta)\n"
         f"⏰ Vaqt: {now_str}"
     )
     for admin_id in ADMINS:
@@ -345,7 +344,8 @@ async def finalize_and_send_load(message: types.Message, state: FSMContext, data
         f"{main_content}\n\n"
         f"_____________________\n"
         f"👤 <b>Kurator:</b> {curator_info['name']} (@{user.username or 'yoq'})\n"
-        f"📢 <b>Kanallar:</b> @YukchiForwarder"
+        f"📢 <b>Kanallar:</b> @YukchiForwarder\n\n"
+        f"💡 <i>Eslatma: Yukni qabul qilish uchun pastdagi tugmani bosing.</i>"
     )
     
     expire_time = datetime.now() + timedelta(days=data.get("load_days", 1))
@@ -369,9 +369,9 @@ async def finalize_and_send_load(message: types.Message, state: FSMContext, data
         "expire_time": expire_time.isoformat()
     }
     save_json(LOADS_FILE, active_loads)
-    await message.answer("✅ Yuk guruhlarga va adminga muvaffaqiyatli yuborildi!")
-    
-    # E'lon berilganda adminga ham nusxa yuborish
+    await message.answer("✅ Yuk guruhlarga va adminga yuborildi!")
+
+    # Adminga yuk e'loni haqida xabar yuborish
     for admin_id in ADMINS:
         try:
             await bot1.send_message(chat_id=admin_id, text=f"🔔 <b>Yangi yuk e'lon qilindi!</b>\n\n{final_caption}")
@@ -380,34 +380,42 @@ async def finalize_and_send_load(message: types.Message, state: FSMContext, data
                 await bot2.send_message(chat_id=admin_id, text=f"🔔 <b>Yangi yuk e'lon qilindi!</b>\n\n{final_caption}")
             except Exception:
                 pass
-                
+
     await state.clear()
 
 @dp1.callback_query(F.data.startswith("show_curator_phone:"))
 async def show_curator_phone(call: types.CallbackQuery):
     await call.answer()
-    curator = curators_db.get(int(call.data.split(":")[1]), {"phone": "Mavjud emas"})
-    await call.answer(f"📞 Kurator raqami: {curator['phone']}", show_alert=True)
+    try:
+        curator_id = int(call.data.split(":")[1])
+        curator = curators_db.get(curator_id, {"phone": "Mavjud emas"})
+        await call.answer(f"📞 Kurator raqami: {curator['phone']}", show_alert=True)
+    except Exception:
+        await call.answer("❌ Xatolik!", show_alert=True)
 
 @dp1.callback_query(F.data.startswith("accept_load:"))
 async def accept_load_handler(call: types.CallbackQuery):
     await call.answer()
-    driver = drivers_db.get(call.from_user.id)
-    if not driver:
-        await call.answer("❌ Siz haydovchi emassiz! /start orqali ro'yxatdan o'ting.", show_alert=True)
-        return
-    load = active_loads.get(int(call.data.split(":")[1]))
-    if not load:
-        await call.answer("❌ Bu yuk topilmadi yoki muddati tugagan!", show_alert=True)
-        return
     try:
-        await bot1.send_message(chat_id=load["user_id"], text=f"✅ <b>Haydovchi yukni qabul qildi!</b>\nIsm: {driver['name']}\nMashina: {driver['car']}")
+        driver = drivers_db.get(call.from_user.id)
+        if not driver:
+            await call.answer("❌ Siz haydovchi emassiz! /start orqali ro'yxatdan o'ting.", show_alert=True)
+            return
+        load_id = int(call.data.split(":")[1])
+        load = active_loads.get(load_id)
+        if not load:
+            await call.answer("❌ Bu yuk topilmadi!", show_alert=True)
+            return
+        try:
+            await bot1.send_message(chat_id=load["user_id"], text=f"✅ <b>Haydovchi yukni qabul qildi!</b>\nIsm: {driver['name']}\nMashina: {driver['car']}")
+        except Exception:
+            pass
+        await call.answer("✅ Kuratorga ma'lumotingiz yuborildi!", show_alert=True)
     except Exception:
-        pass
-    await call.answer("✅ Kuratorga ma'lumotingiz yuborildi!", show_alert=True)
+        await call.answer("❌ Xatolik yuz berdi!", show_alert=True)
 
 
-# ================= 2-BOT HANDLERS (@YukchiForwarderorg_Bot) =================
+# ================= 2-BOT HANDLERS (@YukchiForwarderorg_Bot - Nazoratchi) =================
 def get_complaint_keyboard(is_admin: bool = False):
     buttons = [
         [InlineKeyboardButton(text="⚠️ Shikoyat qilish", callback_data="comp_shikoyat")],
@@ -480,7 +488,7 @@ async def security_group_guard(message: types.Message):
             pass
 
 
-# ================= COMMON ADMIN HANDLERS (Reklama va Boshqaruv) =================
+# ================= COMMON ADMIN HANDLERS =================
 async def handle_broadcast_start(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
     if call.from_user.id not in ADMINS: 
@@ -491,25 +499,18 @@ async def handle_broadcast_start(call: types.CallbackQuery, state: FSMContext):
 async def handle_broadcast_process(message: types.Message, state: FSMContext, bot_inst: Bot):
     if message.from_user.id not in ADMINS: 
         return
-    
-    success_count = 0
-    # Guruhlarga tarqatish
     for g in TARGET_GROUPS:
         try: 
             await message.copy_to(chat_id=g)
-            success_count += 1
         except: 
             pass
-            
-    # Barcha foydalanuvchilarga tarqatish (user_stats dagi barcha userlarga)
     for uid in user_stats.keys():
         if isinstance(uid, int):
             try:
                 await message.copy_to(chat_id=uid)
             except:
                 pass
-
-    await message.answer(f"✅ Reklama muvaffaqiyatli tarqatildi! (Guruhlarga yetib bordi)")
+    await message.answer("✅ Reklama barchaga tarqatildi!")
     await state.clear()
 
 async def handle_ban_start(call: types.CallbackQuery, state: FSMContext):
@@ -577,32 +578,24 @@ for dp_inst, b_inst in [(dp1, bot1), (dp2, bot2)]:
 @dp1.callback_query(F.data == "admin_list_drivers")
 async def lst_drv(c: types.CallbackQuery):
     await c.answer()
-    if c.from_user.id not in ADMINS: 
-        return
     txt = "\n".join([f"{d['name']} | {d['car']}" for d in drivers_db.values()]) or "Haydovchilar yo'q"
     await c.message.answer(f"🚛 Haydovchilar ro'yxati:\n{txt}")
 
 @dp1.callback_query(F.data == "admin_list_curators")
 async def lst_cur(c: types.CallbackQuery):
     await c.answer()
-    if c.from_user.id not in ADMINS: 
-        return
     txt = "\n".join([f"{cu['name']}" for cu in curators_db.values()]) or "Kuratorlar yo'q"
     await c.message.answer(f"📦 Kuratorlar ro'yxati:\n{txt}")
 
 @dp2.callback_query(F.data == "admin_list_drivers")
 async def lst_drv2(c: types.CallbackQuery):
     await c.answer()
-    if c.from_user.id not in ADMINS: 
-        return
     txt = "\n".join([f"{d['name']} | {d['car']}" for d in drivers_db.values()]) or "Haydovchilar yo'q"
     await c.message.answer(f"🚛 Haydovchilar ro'yxati:\n{txt}")
 
 @dp2.callback_query(F.data == "admin_list_curators")
 async def lst_cur2(c: types.CallbackQuery):
     await c.answer()
-    if c.from_user.id not in ADMINS: 
-        return
     txt = "\n".join([f"{cu['name']}" for cu in curators_db.values()]) or "Kuratorlar yo'q"
     await c.message.answer(f"📦 Kuratorlar ro'yxati:\n{txt}")
 
